@@ -1,0 +1,639 @@
+---
+title: "Untitled"
+author: "Tobi Agbede"
+date: "2026-02-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# Code to set up the files from the protein list
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpubr)
+
+Proteinlist <- read.csv('/Users/tobiagbede/Desktop/UofT/PhD/Pugh Lab/Projects/Trudel_Serges/ST_SignificantProteins_MSStats.csv')
+
+Proteinlist_clean <- Proteinlist %>%
+  group_by(Label) %>%
+  select(Protein, Label, log2FC, pvalue, adj.pvalue)
+
+Protein_KM5 <- Proteinlist_clean %>%
+  filter(Label=="KM5-KM0")
+Protein_KM10 <- Proteinlist_clean %>%
+  filter(Label=="KMIC-KM0")
+Protein_RP5 <- Proteinlist_clean %>%
+  filter(Label=="RP5-RP0")
+Protein_RP10 <- Proteinlist_clean %>%
+  filter(Label=="RPIC-RP0")
+
+```
+
+
+```{r}
+#Volcano plots
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(ggpubr) 
+
+target_gene <- c("PCK2", "NQO1", "LRPPRC", "TACO")
+
+# --- 1. Define the Flexible Function ---
+plot_volcano_for_gene <- function(df, comparison_name, 
+                                  target_gene, 
+                                  fc_cutoff = 1, 
+                                  p_cutoff = 0.05) {
+  
+  # A. Categorize genes & Calculate Ranking Score
+  df <- df %>%
+    mutate(
+      color_group = case_when(
+        adj.pvalue < p_cutoff & log2FC > fc_cutoff ~ "Upregulated",
+        adj.pvalue < p_cutoff & log2FC < -fc_cutoff ~ "Downregulated",
+        TRUE ~ "NS"
+      ),
+      rank_score = -log10(adj.pvalue) * abs(log2FC)
+    )
+  
+  # B. Check if Target Gene Exists in this dataframe
+  gene_exists <- target_gene %in% df$Protein
+  
+  if (!gene_exists) {
+    message(paste("Warning:", target_gene, "not found in", comparison_name, "- skipping highlight."))
+  }
+  
+  # C. Identify labels (Target Gene + Top 10 by rank)
+  df <- df %>%
+    mutate(
+      label_text = ifelse(
+        Protein == target_gene | (rank(desc(rank_score)) <= 10 & color_group != "NS"),
+        Protein, 
+        NA
+      )
+    )
+  
+  # D. Dynamic Axis Symmetry (Optional but recommended)
+  max_x <- max(abs(df$log2FC), na.rm = TRUE) * 1.1
+  
+  # E. Create the Plot
+  p <- ggplot(df, aes(x = log2FC, y = -log10(adj.pvalue))) +
+    
+    # Base points
+    geom_point(aes(color = color_group), alpha = 0.7, size = 1.8) +
+    
+    scale_color_manual(values = c("Downregulated" = "#377EB8", 
+                                  "NS" = "grey70", 
+                                  "Upregulated" = "#E41A1C")) +
+    
+    # Highlight Target Gene (Only if it exists)
+    {if(gene_exists) 
+      geom_point(data = subset(df, Protein == target_gene),
+                 color = "purple", size = 5, shape = 18) 
+    } +
+    
+    # Add Labels
+    geom_text_repel(aes(label = label_text),
+                    size = 4,
+                    fontface = "italic",
+                    box.padding = 0.6,
+                    max.overlaps = Inf,
+                    min.segment.length = 0,
+                    show.legend = FALSE) +
+    
+    theme_pubr(base_size = 14) + 
+    
+    labs(
+      title = paste0(comparison_name),
+      x = bquote(~Log[2]~ "Fold Change"),
+      y = bquote(~-Log[10]~ "Adj. P-value"),
+      color = NULL
+    ) + 
+    
+    coord_cartesian(clip = "off", xlim = c(-max_x, max_x)) + # Force symmetry
+    
+    theme(
+      legend.position = "bottom",
+      legend.text = element_text(size = 12),
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      axis.line = element_line(size = 0.8)
+    )
+  
+  return(p)
+}
+
+# --- 2. SETUP: Define your Sample Comparisons ---
+# Ensure these dataframes exist in your environment
+plot_list <- list(
+  "KM5 vs KM0"   = Protein_KM5,
+  "KM10 vs KM0"  = Protein_KM10,
+  "RP5 vs RP0"   = Protein_RP5,
+  "RP10 vs RP0"  = Protein_RP10
+)
+
+# --- 3. INPUT: List of Genes you want to highlight ---
+target_genes_list <- c("PCK2", "NQO1", "LRPPRC", "STAT3") 
+
+# --- 4. EXECUTION: Loop through Genes AND Samples ---
+output_path <- '/Users/tobiagbede/Desktop/UofT/PhD/Pugh Lab/Projects/Trudel_Serges/Plots'
+
+for (gene in target_genes_list) {
+  
+  message(paste("\n--- Generating Plots for Gene:", gene, "---"))
+  
+  for (name in names(plot_list)) {
+    
+    # Generate Plot
+    p <- plot_volcano_for_gene(
+      df = plot_list[[name]], 
+      comparison_name = name, 
+      target_gene = gene
+    )
+    
+    # Construct Filename (e.g., "Volcano_NQO1_KM5vsKM0.pdf")
+    clean_name <- gsub(" ", "", name)
+    filename_pdf <- paste0("Volcano_", gene, "_", clean_name, ".pdf")
+    filename_png <- paste0("Volcano_", gene, "_", clean_name, ".png")
+    
+    # Save PDF
+    #ggsave(filename = filename_pdf, plot = p, 
+    #       width = 12, height = 8, dpi = 300, path = output_path)
+    
+    # Save PNG
+    ggsave(filename = filename_png, plot = p, 
+           width = 12, height = 8, dpi = 300, path = output_path)
+    
+    message(paste("Saved:", filename_pdf))
+  }
+}
+
+```
+
+
+```{r}
+#loading and matching/cleaning data
+library(GEOquery)
+library(limma)
+
+gse_id <- "GSE6477"   # replace with actual GEO accession
+gse <- getGEO(gse_id, GSEMatrix = TRUE)
+eset <- gse[[1]]
+expr <- exprs(eset)
+dim(expr)     # genes × samples
+
+pheno <- pData(eset)
+head(pheno)
+colnames(pheno)
+
+feature <- fData(eset)
+head(feature)
+colnames(feature)
+
+all(rownames(feature) == rownames(expr))
+all(rownames(pheno)   == colnames(expr))
+
+
+library(dplyr)
+library(tibble)
+
+pheno_sub <- pheno %>%
+  select(title,
+         geo_accession,
+         characteristics_ch1,
+         characteristics_ch1.1) %>%
+  rownames_to_column("sample")
+
+feature_sub <- feature %>%
+  select(ID,
+         `Gene Symbol`,
+         ENTREZ_GENE_ID) %>%
+  rownames_to_column("feature_id")
+
+expr_long <- as.data.frame(expr) %>%
+  rownames_to_column("feature_id") %>%
+  pivot_longer(
+    cols = -feature_id,
+    names_to = "sample",
+    values_to = "expression"
+  )
+
+expr_feature <- expr_long %>%
+  left_join(feature_sub, by = "feature_id")
+
+final_df <- expr_feature %>%
+  left_join(pheno_sub, by = "sample")
+
+final_df <- final_df %>%
+  select(
+    sample,
+    title,
+    geo_accession,
+    characteristics_ch1,
+    characteristics_ch1.1,
+    ID,
+    `Gene Symbol`,
+    ENTREZ_GENE_ID,
+    expression
+  )
+
+final_df <- final_df %>%
+  mutate(
+    title = sub("_(M|NC)[0-9]+$", "", title)
+  )
+```
+
+```{r}
+#plot boxplot for each gene
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+
+# Function to plot gene expression across groups
+plot_gene_expression <- function(df, genes, output_path) {
+  
+  # Ensure genes is a vector
+  genes <- as.character(genes)
+  
+  for (gene in genes) {
+    
+    # 1. Filter and clean
+    gene_df <- df %>%
+      filter(`Gene Symbol` == gene) %>%
+      mutate(
+        title = ifelse(title == "rNew MM", "New MM", as.character(title)),
+        expression = as.numeric(expression)
+      )
+    
+    # 2. Normalize to Normal donor
+    normal_baseline <- mean(gene_df$expression[gene_df$title == "Normal donor"], na.rm = TRUE)
+    gene_df$expression <- gene_df$expression / normal_baseline
+  
+    
+    # 3. Remove outliers per group (1.5×IQR rule)
+    gene_df <- gene_df %>%
+      group_by(title) %>%
+      filter(expression >= (quantile(expression, 0.25) - 1.5*IQR(expression)) &
+             expression <= (quantile(expression, 0.75) + 1.5*IQR(expression))) %>%
+      ungroup()
+    
+    # 4. Reorder groups by median expression
+    gene_df$title <- reorder(gene_df$title, gene_df$expression, FUN = function(x) median(x, na.rm = TRUE))
+    
+    # 5. Compute significant comparisons
+    stat.test <- compare_means(expression ~ title, data = gene_df, method = "t.test") %>%
+      filter(!is.na(p) & p < 0.05)
+    
+    my_sig_comparisons <- if(nrow(stat.test) > 0) {
+      lapply(1:nrow(stat.test), function(i) c(stat.test$group1[i], stat.test$group2[i]))
+    } else {
+      NULL
+    }
+    
+    # 6. Y-axis range
+    y_range <- range(gene_df$expression, na.rm = TRUE)
+    
+    # 7. Plot
+    p <- ggplot(gene_df, aes(x = title, y = expression, fill = title)) +
+      geom_boxplot(alpha = 0.8, outlier.shape = NA) +
+      geom_jitter(width = 0.2, size = 1, alpha = 0.4, color = "black") +
+      scale_fill_brewer(palette = "Set2") +
+      {if(!is.null(my_sig_comparisons)) 
+        stat_compare_means(
+          comparisons = my_sig_comparisons,
+          method = "t.test",
+          label = "p.signif"
+        )
+      } +
+      theme_classic() +
+      labs(title = paste0("Expression of ", gene, " across groups"),
+           x = NULL, y = paste0(gene, " levels (vs Normal)")) +
+      theme(
+        legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 12, color = "black"),
+        axis.text.y = element_text(size = 12, color = "black"),
+        axis.line = element_line(size = 0.8)
+      )
+    
+    print(p)
+    
+    # 8. Save plot
+    ggsave(
+      filename = paste0(gene, "_Expression.png"),
+      plot = p,
+      width = 12,
+      height = 8,
+      dpi = 300,
+      path = output_path
+    )
+  }
+}
+
+# Example usage:
+plot_gene_expression(
+  df = final_df,
+  genes = c("TACO1", "LRPPRC", "PCK2", "NQO1"),  # can be single gene or multiple
+  output_path = "/Users/tobiagbede/Desktop/UofT/PhD/Pugh Lab/Projects/Trudel_Serges/Plots"
+)
+```
+
+```{r}
+#ratio boxplots 
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(ggpubr)
+
+# --- Define the Function ---
+analyze_gene_ratio <- function(df, gene_pair, output_path) {
+  
+  gene1 <- gene_pair[1]
+  gene2 <- gene_pair[2]
+  ratio_name <- paste0(gene1, "_", gene2, "_Ratio")
+  
+  message(paste("\nProcessing:", ratio_name))
+  
+  # 1. Filter Data for the Specific Pair
+  # Check if both genes exist in the dataframe first
+  available_genes <- unique(df$`Gene Symbol`)
+  if (!all(gene_pair %in% available_genes)) {
+    message(paste("SKIPPING: One or both genes not found in data ->", gene1, ",", gene2))
+    return(NULL)
+  }
+  
+  # Filter & Basic Clean
+  df_pair <- df %>%
+    filter(`Gene Symbol` %in% gene_pair) %>%
+    mutate(
+      title = ifelse(title == "rNew MM", "New MM", as.character(title)),
+      expression = as.numeric(expression)
+    )
+  
+  # 2. Aggregate Probes (Mean)
+  df_agg <- df_pair %>%
+    group_by(sample, title, geo_accession, characteristics_ch1, `characteristics_ch1.1`, `Gene Symbol`) %>%
+    summarise(val = mean(expression, na.rm = TRUE), .groups = "drop")
+  
+  # 3. Pivot & Calculate Ratio
+  plot_data <- df_agg %>%
+    pivot_wider(names_from = `Gene Symbol`, values_from = val)
+  
+  # Check again if pivot created both columns (sometimes data exists but not in same samples)
+  if (!all(gene_pair %in% colnames(plot_data))) {
+    message("SKIPPING: Pivot failed (genes might not overlap in samples).")
+    return(NULL)
+  }
+  
+  plot_data <- plot_data %>%
+    filter(!is.na(!!sym(gene1)) & !is.na(!!sym(gene2))) %>% # Remove rows with NAs
+    mutate(expression = !!sym(gene1) / !!sym(gene2))        # Calculate Ratio
+  
+  if (nrow(plot_data) == 0) {
+    message("SKIPPING: No samples have data for BOTH genes.")
+    return(NULL)
+  }
+
+  # 4. Normalization (Fold Change vs Normal)
+  if ("Normal donor" %in% plot_data$title) {
+    normal_baseline <- mean(plot_data$expression[plot_data$title == "Normal donor"], na.rm = TRUE)
+    plot_data$expression <- plot_data$expression / normal_baseline
+    y_lab_text <- paste(gene1, "/", gene2, "(Fold Change vs Normal)")
+  } else {
+    y_lab_text <- paste(gene1, "/", gene2, "Ratio")
+  }
+  
+  # 5. Outlier Removal (1.5x IQR) per group
+  plot_data <- plot_data %>%
+    group_by(title) %>%
+    filter(expression >= (quantile(expression, 0.25) - 1.5*IQR(expression)) &
+           expression <= (quantile(expression, 0.75) + 1.5*IQR(expression))) %>%
+    ungroup()
+  
+  if (nrow(plot_data) == 0) return(NULL) # Safety check after filtering
+  
+  # 6. Reorder & Stats
+  plot_data$title <- reorder(plot_data$title, plot_data$expression, FUN = median)
+  
+  stat.test <- tryCatch({
+    compare_means(expression ~ title, data = plot_data, method = "t.test") %>%
+      filter(!is.na(p) & p < 0.05)
+  }, error = function(e) return(data.frame()))
+  
+  my_sig_comparisons <- list()
+  if(nrow(stat.test) > 0) {
+    my_sig_comparisons <- lapply(1:nrow(stat.test), function(i) c(stat.test$group1[i], stat.test$group2[i]))
+  }
+  
+  # 7. Plotting
+  y_range <- range(plot_data$expression, na.rm = TRUE)
+  y_max_pad <- y_range[2] + 0.15 * diff(y_range)
+  
+  p <- ggplot(plot_data, aes(x = title, y = expression, fill = title)) +
+    geom_boxplot(alpha = 0.8, outlier.shape = NA) + 
+    geom_jitter(width = 0.2, size = 1, alpha = 0.4, color = "black") +
+    scale_fill_brewer(palette = "Set2") +
+    
+    {if(length(my_sig_comparisons) > 0) 
+      stat_compare_means(
+        comparisons = my_sig_comparisons, 
+        method = "t.test",
+        label = "p.signif"
+      )
+    } +
+    
+    theme_classic() +
+    labs(
+      title = paste("Ratio of", gene1, "/", gene2, "across groups"), 
+      x = NULL, 
+      y = y_lab_text
+    ) +
+    # coord_cartesian(ylim = c(y_range[1], y_max_pad)) + # Optional: Strict limits
+    theme(
+      legend.position = "none",
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 12, color = "black"),
+      axis.text.y = element_text(size = 12, color = "black"),
+      axis.line = element_line(size = 0.8)
+    )
+  
+  print(p)
+  
+  # 8. Save
+  ggsave(
+    filename = paste0(ratio_name, "_Boxplot.png"), 
+    plot = p, 
+    width = 12, height = 8, dpi = 300, 
+    path = output_path
+  )
+  
+  message("Saved successfully.")
+}
+
+# --- EXECUTION ---
+
+# 1. Define your list of pairs
+gene_pairs_to_test <- list(
+  c("STAT3", "LRPPRC"),
+  c("STAT3", "TACO1"),    # Example: Will work if genes exist
+  c("PCK2", "PCK1")  # Example: Will be SKIPPED
+)
+
+# 2. Run the loop
+output_dir <- '/Users/tobiagbede/Desktop/UofT/PhD/Pugh Lab/Projects/Trudel_Serges/Plots'
+
+for (pair in gene_pairs_to_test) {
+  analyze_gene_ratio(final_df, pair, output_dir)
+}
+
+```
+
+```{r}
+#cell_line <- read.csv2('/Users/tobiagbede/Desktop/UofT/PhD/Pugh Lab/Projects/Trudel_Serges/ProteinAtlas/LRPPRC/cell_line_analysis_data.tsv', sep = "\t")
+#cell_line_category <- read.csv2('/Users/tobiagbede/Desktop/UofT/PhD/Pugh Lab/Projects/Trudel_Serges/ProteinAtlas/LRPPRC/celline_category_rna_Any_Cancer.tsv', sep = "\t")
+cell_line_cancer_type <- read.csv2('/Users/tobiagbede/Desktop/UofT/PhD/Pugh Lab/Projects/Trudel_Serges/ProteinAtlas/LRPPRC/rna_cell_line_tcga_comparison.tsv', sep = "\t")
+cell_line_cancer_type2 <- read.csv2('/Users/tobiagbede/Desktop/UofT/PhD/Pugh Lab/Projects/Trudel_Serges/ProteinAtlas/LRPPRC/rna_cell_lines.tsv', sep = "\t")
+Gene_expression <- read.csv2('/Users/tobiagbede/Desktop/UofT/PhD/Pugh Lab/Projects/Trudel_Serges/ProteinAtlas/LRPPRC/rna_celline.tsv', sep = "\t")
+
+library(dplyr)
+
+Gene_expression <- Gene_expression %>%
+  mutate(nTPM = suppressWarnings(as.numeric(nTPM))) 
+  
+# Merge with cell_line_cancer_type
+Gene_expression <- Gene_expression %>%
+  inner_join(
+    cell_line_cancer_type2 %>% select(Cell.line, Primary.disease), 
+    by = "Cell.line"
+  )
+
+
+Gene_expression <- Gene_expression %>%
+  group_by(Gene.name, Primary.disease) %>%
+  filter(n() > 1) %>%   # keep only diseases with more than one sample per gene
+  ungroup()
+
+# Show rows where Primary.disease == "adrenocortical cancer" for a certain genee
+Gene_expression[
+  Gene_expression$Primary.disease == "Adrenocortical cancer" &
+  Gene_expression$Gene.name == "TACO1",
+]
+
+#####
+library(dplyr)
+library(purrr)
+library(broom)
+
+# Subset to TACO1 only
+taco_df <- Gene_expression %>%
+  filter(Gene.name == "TACO1")
+
+# Get list of diseases excluding Myeloma
+other_diseases <- setdiff(unique(taco_df$Primary.disease), "Myeloma")
+
+# Run Myeloma vs each disease t-test
+t_test_results <- map_dfr(other_diseases, function(disease) {
+  
+  sub_df <- taco_df %>%
+    filter(Primary.disease %in% c("Myeloma", disease))
+  
+  # Safety check: need at least 2 samples per group
+  if (min(table(sub_df$Primary.disease)) < 2) {
+    return(NULL)
+  }
+  
+  t.test(nTPM ~ Primary.disease, data = sub_df) %>%
+    tidy() %>%
+    mutate(
+      comparison = paste("Myeloma vs", disease),
+      disease = disease
+    )
+})
+
+# View results
+t_test_results %>%
+  select(comparison, estimate1, estimate2, statistic, p.value) %>%
+  arrange(p.value)
+```
+
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+library(RColorBrewer)
+
+# Function to plot gene expression across groups with bold pastel colors
+plot_gene_expression <- function(df, genes, output_path) {
+  
+  genes <- as.character(genes)
+  
+  for (gene in genes) {
+    
+    # 1. Filter and clean
+    gene_df <- Gene_expression %>%
+      filter(Gene.name == gene) %>%
+      rename(expression = nTPM, title = Primary.disease)
+    
+    # 2. Remove outliers per group (1.5×IQR rule)
+    gene_df <- gene_df %>%
+      group_by(title) %>%
+      filter(expression >= (quantile(expression, 0.25) - 1.5*IQR(expression)) &
+             expression <= (quantile(expression, 0.75) + 1.5*IQR(expression))) %>%
+      ungroup()
+    
+    # 3. Reorder groups by median expression
+    gene_df$title <- reorder(gene_df$title, gene_df$expression, FUN = median)
+    
+    # 4. Create bold pastel color palette (fixed for >12 groups)
+    n_groups <- length(unique(gene_df$title))
+    base_colors <- brewer.pal(min(12, 12), "Set3")             # 12 pastel colors max
+    pastel_colors <- colorRampPalette(base_colors)(n_groups)   # expand to any number of groups
+    
+    # 5. Plot
+    p <- ggplot(gene_df, aes(x = title, y = expression, fill = title, color = title)) +
+      geom_boxplot(alpha = 0.8, outlier.shape = NA, color = "black", size = 0.8) +
+      geom_jitter(width = 0.2, size = 2, alpha = 0.8, shape = 21, stroke = 0.8, color = "black") +
+      scale_fill_manual(values = pastel_colors) +
+      scale_color_manual(values = pastel_colors) +
+      theme_classic() +
+      labs(title = paste0("Expression of ", gene, " across groups"),
+           x = NULL, y = paste0(gene, " levels (normalized TPM)")) +
+      theme(
+        legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 16, color = "#333333"),
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 12, face = "bold", color = "#222222"),
+        axis.text.y = element_text(size = 12, face = "bold", color = "#222222"),
+        axis.title.y = element_text(face = "bold", size = 14, color = "#222222"),
+        axis.line = element_line(size = 0.8, color = "#555555")
+      )
+
+    print(p)
+    
+    # 6. Save plot
+    ggsave(
+      filename = paste0(gene, "_Cell_Expression.png"),
+      plot = p,
+      width = 12,
+      height = 8,
+      dpi = 300,
+      path = output_path
+    )
+  }
+}
+
+# Example usage:
+plot_gene_expression(
+  df = Gene_expression,
+  genes = c("TACO1", "LRPPRC"),  
+  output_path = "/Users/tobiagbede/Desktop/UofT/PhD/Pugh Lab/Projects/Trudel_Serges/Plots"
+)
+```
+
+
